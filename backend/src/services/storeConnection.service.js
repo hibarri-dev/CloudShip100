@@ -3,6 +3,7 @@ const crypto = require('crypto');
 const { StoreConnection } = require('../models');
 const ApiError = require('../utils/ApiError');
 const { encryptCredentials, randomApiKey } = require('../integrations/utils/crypto.util');
+const requestMode = require('../utils/requestMode');
 
 /**
  * Connect a shop for a company. Credentials encrypted at rest.
@@ -16,12 +17,17 @@ const createStoreConnection = async (companyId, body) => {
     webhookSecret,
     settings,
   } = body;
+  // New stores belong to the mode the dashboard is in, unless the API caller says otherwise.
+  const livemode = body.livemode === undefined ? requestMode.isLive() : body.livemode !== false;
+  if (!livemode && platform !== 'lovable') {
+    throw new ApiError(httpStatus.BAD_REQUEST, 'Test mode is only available for Lovable / Universal stores. Switch to Live mode to connect other platforms.');
+  }
 
   if (!credentials || typeof credentials !== 'object') {
     throw new ApiError(httpStatus.BAD_REQUEST, 'credentials object is required');
   }
 
-  const publicApiKey = platform === 'lovable' ? randomApiKey('cs_live') : undefined;
+  const publicApiKey = platform === 'lovable' ? randomApiKey(livemode ? 'cs_live' : 'cs_test') : undefined;
   const secret = webhookSecret || crypto.randomBytes(24).toString('hex');
 
   const doc = await StoreConnection.create({
@@ -32,6 +38,7 @@ const createStoreConnection = async (companyId, body) => {
     credentialsEncrypted: encryptCredentials(credentials),
     webhookSecret: secret,
     publicApiKey,
+    livemode,
     settings: {
       autoBookOnPaid: settings && settings.autoBookOnPaid != null ? settings.autoBookOnPaid : true,
       defaultMode: (settings && settings.defaultMode) || 'Road',
@@ -57,7 +64,10 @@ const createStoreConnection = async (companyId, body) => {
 };
 
 const listStoreConnections = async (companyId) => {
-  const rows = await StoreConnection.find({ company: companyId }).sort('-createdAt');
+  const rows = await StoreConnection.find({
+    company: companyId,
+    livemode: requestMode.isLive() ? { $ne: false } : false,
+  }).sort('-createdAt');
   return rows.map((d) => sanitizeConnection(d));
 };
 
@@ -123,6 +133,7 @@ const sanitizeConnection = (doc, { includeSecrets = false } = {}) => {
     storeName: json.storeName,
     storeUrl: json.storeUrl,
     status: json.status,
+    livemode: json.livemode !== false,
     settings: json.settings,
     publicApiKey: json.publicApiKey || undefined,
     lastWebhookAt: json.lastWebhookAt,

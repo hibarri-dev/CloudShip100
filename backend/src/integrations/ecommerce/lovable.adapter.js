@@ -102,7 +102,7 @@ const pushStatus = async (storeConnection, booking, statusPayload) => {
     if (!dispatch || dispatch.state !== 'booked') return { skipped: true };
     const { Booking } = require('../../models');
     const { displayShipmentStatus } = require('../utils/shipmentProgress');
-    const parcels = await Booking.find({ _id: { $in: dispatch.parcels.map(parcel => parcel.bookingId).filter(Boolean) } });
+    const parcels = await Booking.find({ _id: { $in: dispatch.parcels.map(parcel => parcel.bookingId).filter(Boolean) }, livemode: { $in: [true, false] } });
     const statuses = parcels.map(displayShipmentStatus);
     const all = parcels.length === dispatch.parcels.length;
     callbackPayload = { externalOrderId, bookingCode: String(dispatch._id),

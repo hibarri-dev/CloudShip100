@@ -44,6 +44,11 @@ const storeConnectionSchema = mongoose.Schema(
       sparse: true,
       index: true,
     },
+    /** false = test-mode store (cs_test_ key): simulated carriers, no invoicing approval, hidden from live views. Fixed at creation. */
+    livemode: {
+      type: Boolean,
+      default: true,
+    },
     status: {
       type: String,
       enum: ['active', 'paused', 'disconnected'],

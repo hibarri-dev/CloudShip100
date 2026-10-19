@@ -61,6 +61,7 @@ const damageLogSchema = mongoose.Schema(
 
 damageLogSchema.index({ driverProfile: 1, code: 1 }, { unique: true });
 damageLogSchema.plugin(toJSON);
+damageLogSchema.plugin(require('./plugins').livemodeScope);
 
 const DamageLog = mongoose.model('DamageLog', damageLogSchema);
 module.exports = DamageLog;

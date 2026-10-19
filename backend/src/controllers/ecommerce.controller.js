@@ -98,7 +98,9 @@ const publicTrack = catchAsync(async (req, res) => {
   if (!code) {
     throw new ApiError(httpStatus.BAD_REQUEST, 'Tracking token required');
   }
+  // Test-mode shipments are trackable by their token too; `livemode` in the filter opts out of the live-only scope.
   const booking = await Booking.findOne({
+    livemode: { $in: [true, false] },
     $or: [{ trackingToken: code }, { code }],
   });
   if (!booking) {

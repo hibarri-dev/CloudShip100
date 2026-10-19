@@ -13,6 +13,7 @@ const put = async (payload) => {
     dropoff: shipment.dropoff || 'unknown',
     weightKg: Number(shipment.weightKg) > 0 ? Number(shipment.weightKg) : 0.01,
     mode: shipment.mode || 'Road',
+    livemode: payload.livemode !== false,
     currency: payload.currency || 'ZAR',
     carrierCost: Number(payload.partnerPrice) || 0,
     marginAmount: Number(payload.marginAmount) || 0,

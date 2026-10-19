@@ -34,6 +34,7 @@ const invoiceSchema = mongoose.Schema(
 
 invoiceSchema.plugin(toJSON);
 invoiceSchema.plugin(paginate);
+invoiceSchema.plugin(require('./plugins').livemodeScope);
 
 /**
  * @typedef Invoice

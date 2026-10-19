@@ -7,6 +7,7 @@ const { toJSON } = require('./plugins');
  */
 const shipmentQuoteSchema = mongoose.Schema(
   {
+    livemode: { type: Boolean, default: true },
     quoteId: {
       type: String,
       required: true,
@@ -65,6 +66,7 @@ const shipmentQuoteSchema = mongoose.Schema(
   { timestamps: true }
 );
 
+shipmentQuoteSchema.index({ createdAt: 1 }, { expireAfterSeconds: 30 * 24 * 3600, partialFilterExpression: { livemode: false } });
 shipmentQuoteSchema.plugin(toJSON);
 
 /**

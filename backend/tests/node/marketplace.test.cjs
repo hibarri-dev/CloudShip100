@@ -7,9 +7,9 @@ const crypto = require('node:crypto');
 const policy = require('../../src/integrations/marketplacePolicy');
 const connection = { _id: 'c'.repeat(24), company: 'company', webhookSecret: 'server-secret', storeName: 'Commoditopia' };
 const input = { pickup: '2 Main Rd, Sandton, 2196, ZA', pickupPhone: '+27820000000', dropoff: '1 Main Rd, Cape Town, 8000, ZA', parcels: [{ quantity: 2, weightKg: 1, lengthCm: 20, widthCm: 15, heightCm: 10, commodity: { cargoForm: 'solid', packagingType: 'bagged' } }] };
-function harness() {
+function harness(conn = connection) {
   let quote, dispatch, count = 0, calls = 0, price = 50, fail = false;
-  const bookings = [], routes = {};
+  const bookings = [], routes = {}, seen = [], advanced = [];
   const document = data => ({ ...data, async save() { return this; }, markModified() {} });
   class Schema { index() {} } Schema.Types = { ObjectId: String };
   const models = {
@@ -21,19 +21,19 @@ function harness() {
     if (name === 'express') return { Router: () => router };
     if (name === 'crypto') return crypto;
     if (name === 'mongoose') return { Schema, models, Types: { ObjectId: { isValid: value => /^[a-f0-9]{24}$/.test(value) } }, model: name => models[name] };
-    if (name === '../../models') return { StoreConnection: { findOne: async () => connection }, Booking: { async create(data) { const booking = document({ ...data, _id: `booking-${count++}` }); bookings.push(booking); return booking; }, async find(query) { return bookings.filter(booking => query._id.$in.includes(booking._id)); } } };
+    if (name === '../../models') return { StoreConnection: { findOne: async () => conn }, Booking: { async create(data) { const booking = document({ ...data, _id: `booking-${count++}` }); bookings.push(booking); return booking; }, async find(query) { return bookings.filter(booking => query._id.$in.includes(booking._id)); } } };
     if (name.endsWith('/ApiError')) return class ApiError extends Error { constructor(code, message) { super(message); this.statusCode = code; } };
     if (name.endsWith('/catchAsync')) return fn => fn;
     if (name.endsWith('/marketplacePolicy')) return policy;
     if (name.endsWith('/carrierTracking.service')) return { refreshBookingTracking: async () => {} };
     if (name.endsWith('/shipmentProgress')) return { displayShipmentStatus: booking => booking.courierStatus === 'delivered' ? 'delivered' : booking.courierStatus === 'collected' ? 'warehouse' : 'booked' };
-    if (name.endsWith('/carriers')) return { async quoteAll() { return { partners: [{ available: true, partnerId: 'courier_guy', serviceName: 'Economy', currency: 'ZAR', sellPrice: price, partnerPrice: price / 1.1, marginAmount: price - price / 1.1, quoteId: `rate-${count++}`, expiresAt: new Date(Date.now() + 900000) }] }; }, async bookStoredQuote() { calls++; if (fail) throw new Error('Timeout after sending booking'); return { carrierShipmentId: `carrier-${calls}`, trackingNumber: `tracking-${calls}`, trackingUrl: `https://carrier.test/${calls}` }; } };
+    if (name.endsWith('/carriers')) return { sandbox: { async advance(id, status) { advanced.push([id, status]); } }, async quoteAll(shipment, options) { seen.push(options); return { partners: [{ available: true, partnerId: 'courier_guy', serviceName: 'Economy', currency: 'ZAR', sellPrice: price, partnerPrice: price / 1.1, marginAmount: price - price / 1.1, quoteId: `rate-${count++}`, expiresAt: new Date(Date.now() + 900000) }] }; }, async bookStoredQuote() { calls++; if (fail) throw new Error('Timeout after sending booking'); return { carrierShipmentId: `carrier-${calls}`, trackingNumber: `tracking-${calls}`, trackingUrl: `https://carrier.test/${calls}` }; } };
     throw new Error(`Unexpected dependency: ${name}`);
   };
   const module = { exports: {} };
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../../src/routes/v1/marketplace.route.js'), 'utf8'), { require: mocked, module, Buffer, process, Date, console });
-  async function call(route, body) { let response; await routes[route]({ body, connectionRecord: connection }, { send(data) { response = data; return data; } }); return response; }
-  return { call, routes, bookings, quote: () => quote, dispatch: () => dispatch, calls: () => calls, setPrice(value) { price = value; }, setFail(value) { fail = value; } };
+  async function call(route, body) { let response; await routes[route]({ body, connectionRecord: conn }, { send(data) { response = data; return data; } }); return response; }
+  return { call, routes, bookings, seen, advanced, quote: () => quote, dispatch: () => dispatch, calls: () => calls, setPrice(value) { price = value; }, setFail(value) { fail = value; } };
 }
 test('commodity policy separates unsupported cargo, incomplete details, and ordinary packaged solids', () => {
   assert.equal(policy.eligibility([{}]).status, 'incomplete');
@@ -112,4 +112,84 @@ test('universal adapter signs callbacks and aggregates multiple parcels into the
   assert.equal(payload.status, 'in_transit'); assert.equal(payload.collected, true);
   const timestamp = sent.headers['x-cloudship-timestamp'];
   assert.equal(sent.headers['x-cloudship-signature'], crypto.createHmac('sha256', connection.webhookSecret).update(`${timestamp}.${sent.body}`).digest('hex'));
+});
+
+test('test-mode stores are simulated end to end: no invoice approval, sandbox carriers only, test-flagged records, and shipment simulation', async () => {
+  const previous = process.env.CLOUDSHIP_INVOICE_CONNECTION_IDS; delete process.env.CLOUDSHIP_INVOICE_CONNECTION_IDS;
+  try {
+    const sandbox = { ...connection, livemode: false }, h = harness(sandbox);
+    assert.equal((await h.call('/connection', {})).livemode, false);
+    const quote = await h.call('/rates', input); // no allow-list entry needed
+    assert.equal(h.seen[0].livemode, false); assert.equal(h.quote().livemode, false);
+    const body = { externalOrderId: 'order:group', quoteId: quote.quoteId, partner: 'courier_guy', service: 'Economy', maxAmount: 100, currency: 'ZAR', buyerPhone: '+27820000001' };
+    await h.call('/book', body);
+    assert.equal(h.dispatch().livemode, false); assert.ok(h.bookings.length && h.bookings.every(booking => booking.livemode === false));
+    assert.equal(h.seen.at(-1).livemode, false);
+    await h.call('/test/advance', { externalOrderId: 'order:group', courierStatus: 'collected' });
+    assert.equal(h.advanced.length, h.bookings.length); assert.equal(h.advanced[0][1], 'collected');
+  } finally { if (previous !== undefined) process.env.CLOUDSHIP_INVOICE_CONNECTION_IDS = previous; }
+});
+test('live stores still need invoice approval, use live carriers and cannot use shipment simulation', async () => {
+  const previous = process.env.CLOUDSHIP_INVOICE_CONNECTION_IDS; process.env.CLOUDSHIP_INVOICE_CONNECTION_IDS = connection._id;
+  try {
+    const h = harness();
+    await h.call('/rates', input);
+    assert.equal(h.seen[0].livemode, true); assert.equal(h.quote().livemode, true);
+    await assert.rejects(h.call('/test/advance', { externalOrderId: 'order:group' }), /test-mode/);
+    assert.equal(h.advanced.length, 0);
+  } finally { if (previous === undefined) delete process.env.CLOUDSHIP_INVOICE_CONNECTION_IDS; else process.env.CLOUDSHIP_INVOICE_CONNECTION_IDS = previous; }
+});
+test('sandbox carrier prices locally, honours magic addresses, and fails like a carrier would', async () => {
+  const sandbox = require('../../src/services/carriers/sandbox.adapter');
+  const { options } = await sandbox.quote({ pickup: '1 A St, Sandton', dropoff: '2 B St, Cape Town', weightKg: 2, lengthCm: 20, widthCm: 20, heightCm: 20 });
+  assert.deepEqual(options.map(option => option.serviceName), ['Economy', 'Express']); assert.ok(options[1].partnerPrice > options[0].partnerPrice);
+  await assert.rejects(sandbox.quote({ pickup: 'x', dropoff: '9 Unserviceable Rd', weightKg: 1 }), /no service/);
+  const base = await sandbox.quote({ pickup: 'x', dropoff: 'price-increase road', weightKg: 1 });
+  const rebook = await sandbox.quote({ pickup: 'x', dropoff: 'price-increase road', weightKg: 1, sandboxPhase: 'book' });
+  assert.equal(rebook.options[0].partnerPrice, Math.round(base.options[0].partnerPrice * 1.5 * 100) / 100);
+  await assert.rejects(sandbox.book({ pickup: 'x', dropoff: 'carrier-error lane', weightKg: 1 }), /did not confirm/);
+  await assert.rejects(sandbox.book({ pickup: 'x', dropoff: 'y', weightKg: 99 }), /did not confirm/);
+});
+test('the scope follows the request mode: live sees live, test sees only sandbox data, and test documents are stamped', () => {
+  const requestMode = require('../../src/utils/requestMode');
+  const hooks = {}, added = [];
+  require('../../src/models/plugins/livemodeScope.plugin')({ path: () => false, add: field => added.push(field), pre: (name, fn) => { hooks[name] = fn; } });
+  assert.ok(added[0].livemode, 'the field is added when a model lacks it');
+  const query = (filter, options = {}) => { const q = { filter, where(extra) { Object.assign(this.filter, extra); }, getFilter() { return this.filter; }, getOptions() { return options; } }; hooks.find.call(q); return q.filter; };
+  assert.deepEqual(query({ company: 'c' }), { company: 'c', livemode: { $ne: false } }); // no request: live
+  assert.deepEqual(query({ livemode: false }), { livemode: false });
+  assert.deepEqual(query({ _id: 'x' }, { anyMode: true }), { _id: 'x' });
+  requestMode.run(false, () => {
+    assert.deepEqual(query({ company: 'c' }), { company: 'c', livemode: false });
+    const pipeline = [{ $group: { _id: '$status' } }];
+    hooks.aggregate.call({ pipeline: () => pipeline, options: {} });
+    assert.deepEqual(pipeline[0], { $match: { livemode: false } });
+    const doc = { isNew: true, livemode: true }; hooks.validate.call(doc, () => {}); assert.equal(doc.livemode, false);
+  });
+  requestMode.run(true, () => { const doc = { isNew: true, livemode: true }; hooks.validate.call(doc, () => {}); assert.equal(doc.livemode, true); });
+  const pipeline = [{ $group: { _id: '$status' } }];
+  hooks.aggregate.call({ pipeline: () => pipeline, options: {} });
+  assert.deepEqual(pipeline[0], { $match: { livemode: { $ne: false } } });
+});
+test('authenticated requests take their mode from the x-cloudship-mode header; anything else is live', async () => {
+  const passport = require('passport'), requestMode = require('../../src/utils/requestMode');
+  passport.authenticate = (strategy, options, callback) => () => callback(null, { role: 'admin', id: 'u' }, null);
+  const auth = require('../../src/middlewares/auth');
+  const seen = async header => { let live; await auth()({ headers: header ? { 'x-cloudship-mode': header } : {}, params: {} }, {}, () => { live = requestMode.isLive(); }); return live; };
+  assert.equal(await seen('test'), false); assert.equal(await seen('TEST'), false);
+  assert.equal(await seen('live'), true); assert.equal(await seen(undefined), true); assert.equal(await seen('false'), true);
+  assert.equal(requestMode.isLive(), true); // the mode never leaks out of the request
+});
+test('carrier quotes follow the request mode unless a caller states one explicitly', async () => {
+  Object.assign(process.env, { NODE_ENV: 'test', MONGODB_URL: 'mongodb://127.0.0.1/unused', JWT_SECRET: 'unit-test' });
+  const { ShipmentQuote } = require('../../src/models');
+  ShipmentQuote.create = async () => ({}); // no database in this test
+  const carriers = require('../../src/services/carriers'), requestMode = require('../../src/utils/requestMode');
+  const shipment = { pickup: '1 A St, Sandton', dropoff: '2 B St, Cape Town', weightKg: 2 };
+  const partnersOf = async options => (await carriers.quoteAll(shipment, options)).partners.filter(row => row.available).map(row => row.partnerId);
+  await requestMode.run(false, async () => {
+    assert.deepEqual(new Set(await partnersOf()), new Set(['sandbox_courier'])); // follows the dashboard's test mode
+    assert.equal((await carriers.quoteAll(shipment, { livemode: true })).partners.some(row => row.partnerId === 'sandbox_courier'), false); // explicit wins
+  });
+  assert.equal((await carriers.quoteAll(shipment)).partners.some(row => row.partnerId === 'sandbox_courier'), false); // no request: live carriers only
 });

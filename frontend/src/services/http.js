@@ -1,3 +1,5 @@
+import { modeHeaders } from './mode'
+
 export const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000/v1'
 
 export function getAccessToken() {
@@ -21,6 +23,7 @@ export async function apiFetch(path, options = {}) {
     headers: {
       'Content-Type': 'application/json',
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...modeHeaders(),
       ...(options.headers || {}),
     },
   })

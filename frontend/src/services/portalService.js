@@ -1,3 +1,5 @@
+import { modeHeaders } from './mode'
+
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000/v1'
 const API_ORIGIN = API_BASE_URL.replace(/\/v1$/, '')
 
@@ -8,6 +10,7 @@ async function request(path, { token, method = 'GET', body } = {}) {
     headers: {
       ...(isFormData ? {} : { 'Content-Type': 'application/json' }),
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...modeHeaders(),
     },
     body: body ? (isFormData ? body : JSON.stringify(body)) : undefined,
   })

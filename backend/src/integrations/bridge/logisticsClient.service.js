@@ -97,7 +97,7 @@ const shipmentFromParams = (params = {}) => ({
 });
 
 const liveQuotes = async (params) => {
-  const quoted = await carriers.quoteAll(shipmentFromParams(params));
+  const quoted = await carriers.quoteAll(shipmentFromParams(params), { livemode: params.livemode });
   return toLogisticsOptions(quoted);
 };
 
@@ -133,6 +133,7 @@ const liveBook = async (params) => {
     dropoffPhone: params.dropoffPhone || params.buyerPhone,
     dropoffName: params.dropoffName,
     pickupName: params.pickupName,
+    livemode: params.livemode,
   };
   if (params.logisticsQuoteId) {
     try {
@@ -141,7 +142,7 @@ const liveBook = async (params) => {
       logger.warn(`Live quote ${params.logisticsQuoteId} could not be booked (${err.message}); requesting a fresh rate`);
     }
   }
-  const quoted = await carriers.quoteAll(shipmentFromParams(params));
+  const quoted = await carriers.quoteAll(shipmentFromParams(params), { livemode: params.livemode });
   const match = matchPartnerOption(quoted, params.partner, params.service);
   if (!match || !match.quoteId) {
     throw new Error('No live courier rate for that partner');

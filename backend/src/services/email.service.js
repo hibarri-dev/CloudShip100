@@ -173,7 +173,11 @@ const trackingUrlFor = (booking) => {
   return `${config.frontendUrl}/embed/track?${param}=${encodeURIComponent(token)}`;
 };
 
+// Sandbox (test-mode) bookings never email real people.
+const isSandbox = (booking) => Boolean(booking) && booking.livemode === false;
+
 const sendShipmentBookedEmails = async ({ booking, shopEmail, shopName }) => {
+  if (isSandbox(booking)) return;
   const track = booking.trackingNumber || booking.logisticsBookingRef || booking.code;
   const widget = trackingUrlFor(booking);
   await sendEmailSafe(
@@ -209,6 +213,7 @@ const sendShipmentBookedEmails = async ({ booking, shopEmail, shopName }) => {
 };
 
 const sendBookingConfirmationEmail = async ({ booking, to }) => {
+  if (isSandbox(booking)) return;
   await sendEmailSafe(
     to || booking.buyerEmail || booking.customerEmail,
     `Booking ${booking.code} confirmed`,
@@ -224,6 +229,7 @@ const sendBookingConfirmationEmail = async ({ booking, to }) => {
 };
 
 const sendShipmentStatusEmail = async ({ booking, to, status, detail }) => {
+  if (isSandbox(booking)) return;
   await sendEmailSafe(
     to || booking.buyerEmail || booking.customerEmail,
     `Shipment ${booking.code} is ${status}`,
@@ -234,6 +240,7 @@ const sendShipmentStatusEmail = async ({ booking, to, status, detail }) => {
 };
 
 const sendDriverAssignedEmail = async ({ booking, to, driverName }) => {
+  if (isSandbox(booking)) return;
   await sendEmailSafe(
     to,
     `You were assigned booking ${booking.code}`,

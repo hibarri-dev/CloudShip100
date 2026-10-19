@@ -15,3 +15,6 @@ coverage
 uploads
 
 .env
+
+# Local-only helper that creates a dev admin account
+src/seed/seedAdmin.js

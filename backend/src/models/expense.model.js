@@ -27,6 +27,7 @@ const expenseSchema = mongoose.Schema(
 
 expenseSchema.plugin(toJSON);
 expenseSchema.plugin(paginate);
+expenseSchema.plugin(require('./plugins').livemodeScope);
 
 const Expense = mongoose.model('Expense', expenseSchema);
 module.exports = Expense;

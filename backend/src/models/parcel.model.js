@@ -82,6 +82,7 @@ const parcelSchema = mongoose.Schema(
 
 parcelSchema.index({ driverProfile: 1, code: 1 }, { unique: true });
 parcelSchema.plugin(toJSON);
+parcelSchema.plugin(require('./plugins').livemodeScope);
 
 const Parcel = mongoose.model('Parcel', parcelSchema);
 module.exports = Parcel;

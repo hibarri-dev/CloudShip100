@@ -134,6 +134,7 @@ const mapAssetSchema = withCodeId({
   delivery: { type: String, trim: true },
 });
 
+parcelSchema.plugin(require('./plugins').livemodeScope);
 const Parcel = mongoose.model('WarehouseParcel', parcelSchema);
 const WarehouseBatch = mongoose.model('WarehouseBatch', batchSchema);
 const AssignmentSuggestion = mongoose.model('AssignmentSuggestion', suggestionSchema);

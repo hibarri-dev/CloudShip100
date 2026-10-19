@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { Logo } from '../Logo'
 import { useAuth } from '../../context/AuthContext'
 import { MobileMenuButton } from './Sidebar'
+import { ModeSwitch } from './ModeSwitch'
 
 export function CustomerTopBar({ onMenu }) {
   const { user, logout } = useAuth()
@@ -16,6 +17,8 @@ export function CustomerTopBar({ onMenu }) {
       </div>
 
       <div className="flex-1" />
+
+      <ModeSwitch />
 
       {user ? (
         <div className="hidden text-right sm:block">

@@ -42,6 +42,7 @@ const notificationSchema = mongoose.Schema(
 
 notificationSchema.plugin(toJSON);
 notificationSchema.plugin(paginate);
+notificationSchema.plugin(require('./plugins').livemodeScope);
 
 /**
  * @typedef Notification

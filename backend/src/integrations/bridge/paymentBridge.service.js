@@ -120,7 +120,8 @@ const createPaymentForBooking = async (booking) => {
 };
 
 const confirmPaymentAndBook = async (paymentIntentId) => {
-  const booking = await Booking.findOne({ paymentIntentId });
+  // Payment confirmations can arrive outside a dashboard session, so look in both modes.
+  const booking = await Booking.findOne({ paymentIntentId, livemode: { $in: [true, false] } });
   if (!booking) {
     throw new ApiError(httpStatus.NOT_FOUND, 'Payment / booking not found');
   }
@@ -153,6 +154,7 @@ const confirmPaymentAndBook = async (paymentIntentId) => {
         mode: booking.mode,
         cargo: booking.cargo,
         externalOrderId: booking.externalOrderId,
+        livemode: booking.livemode !== false,
         buyerPhone: booking.buyerPhone,
         pickupName: booking.pickupName,
         logisticsQuoteId: booking.logisticsQuoteId,

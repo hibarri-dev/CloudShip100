@@ -15,9 +15,14 @@ const dhlExpress = require('./dhlExpress.adapter');
 const fedex = require('./fedex.adapter');
 const dsv = require('./dsv.adapter');
 
+const sandbox = require('./sandbox.adapter');
+const requestMode = require('../../utils/requestMode');
+
 const adapters = [courierGuy, uberDirect, dhlExpress, fedex, dsv];
 
-const getAdapter = (partnerId) => adapters.find((adapter) => adapter.id === partnerId);
+// Test-mode stores only ever see the simulated carrier; live stores never see it.
+const adaptersFor = (livemode) => (livemode === false ? [sandbox] : adapters);
+const getAdapter = (partnerId) => [...adapters, sandbox].find((adapter) => adapter.id === partnerId);
 
 const unavailable = (adapter, error) => [
   {
@@ -28,7 +33,7 @@ const unavailable = (adapter, error) => [
   },
 ];
 
-const priceOption = async (adapter, shipment, option) => {
+const priceOption = async (adapter, shipment, option, livemode) => {
   const priced = applyMargin(option.partnerPrice, config.margin);
   const stored = await quoteStore.put({
     partnerId: adapter.id,
@@ -36,6 +41,7 @@ const priceOption = async (adapter, shipment, option) => {
     shipment,
     ...option,
     ...priced,
+    livemode: livemode !== false,
   });
   const speed = classifySpeed({
     partnerId: adapter.id,
@@ -65,7 +71,7 @@ const priceOption = async (adapter, shipment, option) => {
   };
 };
 
-const quoteAdapter = async (adapter, shipment) => {
+const quoteAdapter = async (adapter, shipment, livemode) => {
   if (!adapter.isConfigured()) {
     return unavailable(adapter, 'Not configured. Add API credentials to the backend .env');
   }
@@ -75,14 +81,15 @@ const quoteAdapter = async (adapter, shipment) => {
     if (!options.length) {
       return unavailable(adapter, 'No rates returned');
     }
-    return Promise.all(options.map((option) => priceOption(adapter, shipment, option)));
+    return Promise.all(options.map((option) => priceOption(adapter, shipment, option, livemode)));
   } catch (err) {
     return unavailable(adapter, err.message || 'Quote failed');
   }
 };
 
-const quoteAll = async (shipment) => {
-  const nested = await Promise.all(adapters.map((adapter) => quoteAdapter(adapter, shipment)));
+// Unless told otherwise, quotes and bookings follow the current request's Test/Live mode.
+const quoteAll = async (shipment, { livemode = requestMode.isLive() } = {}) => {
+  const nested = await Promise.all(adaptersFor(livemode).map((adapter) => quoteAdapter(adapter, shipment, livemode)));
   const partners = nested.flat();
   const available = partners.filter((row) => row.available);
   available.sort((a, b) => a.sellPrice - b.sellPrice);
@@ -96,6 +103,11 @@ const quoteAll = async (shipment) => {
 const bookStoredQuote = async (quoteId, extras = {}) => {
   const stored = await quoteStore.get(quoteId);
   if (!stored) {
+    throw new Error('Quote expired or not found. Request a new price.');
+  }
+  // A quote is only bookable in the mode it was issued in.
+  const wantLive = extras.livemode === undefined ? requestMode.isLive() : extras.livemode !== false;
+  if ((stored.livemode !== false) !== wantLive) {
     throw new Error('Quote expired or not found. Request a new price.');
   }
   const adapter = getAdapter(stored.partnerId);
@@ -125,6 +137,7 @@ const bookStoredQuote = async (quoteId, extras = {}) => {
 
 module.exports = {
   adapters,
+  sandbox,
   getAdapter,
   quoteAll,
   publicQuotes,

@@ -10,6 +10,13 @@ const { getAdapter } = require('../integrations/ecommerce');
 const { getStripe } = require('../integrations/bridge/stripeClient');
 const logger = require('../config/logger');
 
+// Test-mode stores are simulated end to end through the marketplace API only.
+const assertLiveConnection = (conn) => {
+  if (conn && conn.livemode === false) {
+    throw new ApiError(httpStatus.BAD_REQUEST, 'Test-mode stores can only be used with the /v1/marketplace API');
+  }
+};
+
 const resolveConnection = async (platform, req) => {
   const connectionId =
     req.params.connectionId ||
@@ -84,6 +91,7 @@ const decodeWixJwt = (rawBody) => {
 const handleOrderWebhook = (platform) =>
   catchAsync(async (req, res) => {
     const conn = await resolveConnection(platform, req);
+    assertLiveConnection(conn);
     const source =
       req.headers['x-wc-webhook-source'] ||
       (platform === 'shopify' ? req.headers['x-shopify-shop-domain'] : null);
@@ -145,6 +153,7 @@ const handleOrderWebhook = (platform) =>
 const handleRates = (platform) =>
   catchAsync(async (req, res) => {
     const conn = await resolveConnection(platform, req);
+    assertLiveConnection(conn);
     const adapter = getAdapter(platform);
     adapter.verifyWebhook(conn, req);
 

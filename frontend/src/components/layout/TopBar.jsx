@@ -3,6 +3,7 @@ import { Logo } from '../Logo'
 import { useAuth } from '../../context/AuthContext'
 import { useNavigate } from 'react-router-dom'
 import { MobileMenuButton } from './Sidebar'
+import { ModeSwitch } from './ModeSwitch'
 
 export function TopBar({ onMenu }) {
   const { user, logout } = useAuth()
@@ -40,6 +41,8 @@ export function TopBar({ onMenu }) {
         <Filter size={16} />
         Filter
       </button>
+
+      <ModeSwitch />
 
       <div className="hidden items-center gap-3 md:flex">
         <Logo size="md" />

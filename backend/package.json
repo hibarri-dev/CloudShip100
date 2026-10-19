@@ -14,6 +14,7 @@
     "start": "pm2 start ecosystem.config.json --no-daemon",
     "dev": "cross-env NODE_ENV=development nodemon --signal SIGKILL src/index.js",
     "seed:warehouse": "cross-env NODE_ENV=development node src/seed/seedWarehouse.js",
+    "seed:admin": "cross-env NODE_ENV=development node src/seed/seedAdmin.js",
     "test": "jest -i --colors --verbose --detectOpenHandles",
     "test:watch": "jest -i --watchAll",
     "coverage": "jest -i --coverage",

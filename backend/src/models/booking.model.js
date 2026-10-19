@@ -1,5 +1,5 @@
 const mongoose = require('mongoose');
-const { toJSON, paginate } = require('./plugins');
+const { toJSON, paginate, livemodeScope } = require('./plugins');
 
 const lineItemSchema = mongoose.Schema(
   {
@@ -79,6 +79,12 @@ const bookingSchema = mongoose.Schema(
       default: Date.now,
     },
     // Marketplace / e-commerce bridge fields (Pratik Stage 1)
+    /** false = sandbox booking from a test-mode store: simulated carrier, hidden from live views, auto-deleted. */
+    livemode: {
+      type: Boolean,
+      default: true,
+      index: true,
+    },
     source: {
       type: String,
       enum: ['portal', 'woocommerce', 'shopify', 'wix', 'lovable', 'bigcommerce', 'api'],
@@ -222,9 +228,12 @@ bookingSchema.index(
 );
 
 bookingSchema.index({ paymentIntentId: 1 }, { sparse: true });
+// Sandbox data is disposable.
+bookingSchema.index({ createdAt: 1 }, { expireAfterSeconds: 30 * 24 * 3600, partialFilterExpression: { livemode: false } });
 
 bookingSchema.plugin(toJSON);
 bookingSchema.plugin(paginate);
+bookingSchema.plugin(livemodeScope);
 
 /**
  * @typedef Booking

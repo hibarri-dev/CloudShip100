@@ -64,6 +64,7 @@ const tripSchema = mongoose.Schema(
 
 tripSchema.index({ driverProfile: 1, code: 1 }, { unique: true });
 tripSchema.plugin(toJSON);
+tripSchema.plugin(require('./plugins').livemodeScope);
 
 const Trip = mongoose.model('Trip', tripSchema);
 module.exports = Trip;

@@ -21,7 +21,7 @@ const TIMELINE_TEMPLATE = [
 const generateBookingCode = async () => {
   for (let i = 0; i < 8; i += 1) {
     const code = `BKG-MKT-${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
-    const exists = await Booking.exists({ code });
+    const exists = await Booking.exists({ code, livemode: { $in: [true, false] } });
     if (!exists) return code;
   }
   return `BKG-MKT-${crypto.randomBytes(6).toString('hex').toUpperCase()}`;

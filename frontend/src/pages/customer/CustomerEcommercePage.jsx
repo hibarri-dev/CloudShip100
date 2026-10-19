@@ -17,6 +17,7 @@ import {
 } from 'lucide-react'
 import { useAuth } from '../../context/AuthContext'
 import { useToast } from '../../context/ToastContext'
+import { isTestMode } from '../../services/mode'
 import { portalService } from '../../services/portalService'
 import { usePortalFetch } from '../../hooks/usePortalFetch'
 import { PageHeader } from '../../components/ui/PageHeader'
@@ -636,6 +637,14 @@ export default function CustomerEcommercePage() {
                   />
                 </FormField>
 
+                {isTestMode() ? (
+                  <p className="rounded-xl bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                    {form.platform === 'lovable'
+                      ? 'You are in Test mode: this store gets a cs_test_ key and uses simulated carriers. Nothing is booked, charged or invoiced, and it stays out of Live mode. Switch to Live (top right) for a real store.'
+                      : 'Test mode supports Lovable / Universal stores only. Switch to Live (top right) to connect this platform.'}
+                  </p>
+                ) : null}
+
                 {form.platform !== 'lovable' ? (
                   <FormField
                     id="storeUrl"
@@ -828,6 +837,9 @@ export default function CustomerEcommercePage() {
                         <div key={s.id} className="rounded-xl border border-line bg-surface p-3 text-xs">
                           <p className="font-extrabold text-ink">
                             {s.storeName} <span className="font-normal text-muted">({s.platform})</span>
+                            {s.livemode === false ? (
+                              <span className="ml-2 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-900">Test</span>
+                            ) : null}
                           </p>
                           <div className="mt-2 space-y-2">
                             <div className="flex flex-wrap items-start gap-2">
@@ -923,7 +935,7 @@ export default function CustomerEcommercePage() {
                       .filter((s) => s.status === 'active')
                       .map((s) => (
                         <option key={s.id} value={s.id}>
-                          {s.storeName} ({s.platform})
+                          {s.storeName} ({s.platform}{s.livemode === false ? ', test' : ''})
                         </option>
                       ))}
                   </select>

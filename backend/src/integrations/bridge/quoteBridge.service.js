@@ -6,6 +6,7 @@ const config = require('../../config/config');
 const logisticsClient = require('./logisticsClient.service');
 const { applyMargin } = require('./margin.service');
 const shopPricing = require('./shopPricing.service');
+const requestMode = require('../../utils/requestMode');
 
 const buildQuoteId = () => `qt_${crypto.randomBytes(12).toString('hex')}`;
 
@@ -133,6 +134,7 @@ const createMarketplaceQuote = async (input) => {
 
   const doc = await ShipmentQuote.create({
     quoteId,
+    livemode: requestMode.isLive(),
     storeConnection: input.storeConnectionId || null,
     company: input.companyId || null,
     pickup,

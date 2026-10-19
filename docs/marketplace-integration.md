@@ -19,3 +19,33 @@ Optional status callbacks use the store encrypted `statusWebhookUrl` credential.
 Create the unique `(connection, externalOrderId)` index on `marketplacedispatches` before production traffic if automatic index creation is disabled. Carrier cancellation/refund and invoice settlement are manual operations; do not conflate them with a storefront buyer refund. Never reset an uncertain `booking` parcel or an interrupted dispatch lease without first checking the carrier for an existing shipment.
 
 Tests: `node --test tests/node/marketplace.test.cjs`. Commoditopia deployment instructions are in that backend's `docs/cloudship-integration.md`.
+
+## Test mode (sandbox)
+
+Flip the **Live / Test switch** in the dashboard header (customer portal and ops dashboard), then create the store under E-commerce > Lovable / Universal: stores take the mode the dashboard is in (API callers can pass `livemode: false` on `POST /v1/ecommerce/stores`). It is issued a `cs_test_…` key and its own `webhookSecret`; the mode cannot be changed afterwards, and only Lovable / Universal stores can be test stores. Use the same endpoints and signing as live; only the credentials differ.
+
+Test-mode stores:
+- use a simulated carrier (`sandbox_courier`, services Economy and Express). No real carrier is ever called, nothing is collected and nothing is invoiced;
+- need no invoicing approval (`CLOUDSHIP_INVOICE_CONNECTION_IDS` is ignored for them);
+- create records flagged `livemode: false`. These are hidden from every ordinary read (dashboards, analytics, driver/warehouse screens, carrier polling, emails) and deleted automatically after 30 days. The dashboards show them when the switch is on Test (see below);
+- cannot use the older `/v1/webhooks/*` routes.
+
+Magic values, placed anywhere in the pickup or dropoff address:
+
+| Value | Effect |
+|---|---|
+| `unserviceable` | `/rates` returns no options |
+| `carrier-error` | rates succeed, `/book` fails with an uncertain carrier result (`needs_attention`) |
+| `price-increase` | the booking-time re-quote is 50% dearer than the checkout quote (`needs_attention`) |
+
+A parcel weighing exactly 99 kg also fails to book.
+
+`POST /v1/marketplace/test/advance` `{externalOrderId, courierStatus?}` (test stores only, `403` for live) moves every parcel of a booked shipment to the next stage (`collection-assigned`, `collected`, `in-transit`, `out-for-delivery`, `delivered`) or to the stated `courierStatus`, then fires the normal signed status callback to the store's `statusWebhookUrl`. The response is the same body as `/status`.
+
+`/connection` returns `livemode` so a storefront can show which mode it is connected to.
+
+### The dashboard switch
+
+The Live / Test switch (top bar, both dashboards) is remembered per browser and sent with every authenticated dashboard request as `x-cloudship-mode: test`. In Test mode the whole dashboard shows only sandbox data: bookings, trips, parcels, invoices, expenses, payment requests, damage logs and notifications, plus the store list and every count and chart. Things created while in Test mode (bookings, notifications, stores, ...) are stamped `livemode: false`, and the portal's own quotes and bookings use the simulated carrier. Switching back to Live shows live data exactly as before. Static resources (users, companies, drivers, fleet, warehouses, pricing rates) are shared between modes.
+
+Only authenticated dashboard requests honour the header. Webhooks, the marketplace API, public tracking and background pollers ignore it: they are live unless the store connection itself is a test store.

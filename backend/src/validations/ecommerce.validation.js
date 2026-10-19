@@ -8,6 +8,7 @@ const connectStore = {
     storeUrl: Joi.string().allow('').optional(),
     credentials: Joi.object().required(),
     webhookSecret: Joi.string().allow('').optional(),
+    livemode: Joi.boolean().optional(),
     settings: Joi.object()
       .keys({
         autoBookOnPaid: Joi.boolean(),

@@ -34,6 +34,7 @@ const paymentRequestSchema = mongoose.Schema(
 
 paymentRequestSchema.plugin(toJSON);
 paymentRequestSchema.plugin(paginate);
+paymentRequestSchema.plugin(require('./plugins').livemodeScope);
 
 /**
  * @typedef PaymentRequest

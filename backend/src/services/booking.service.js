@@ -47,7 +47,7 @@ const queryAllBookings = async (status) => {
 const generateBookingCode = async (prefix = 'BKG') => {
   for (let i = 0; i < 8; i += 1) {
     const code = `${prefix}-${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
-    const exists = await Booking.exists({ code });
+    const exists = await Booking.exists({ code, livemode: { $in: [true, false] } });
     if (!exists) return code;
   }
   return `${prefix}-${crypto.randomBytes(6).toString('hex').toUpperCase()}`;
