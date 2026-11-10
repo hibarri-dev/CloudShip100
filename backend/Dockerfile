@@ -8,7 +8,8 @@ COPY package.json yarn.lock ./
 
 USER node
 
-RUN yarn install --pure-lockfile
+RUN yarn config set network-timeout 600000 \
+  && yarn install --pure-lockfile --production --network-concurrency 4 --ignore-engines
 
 COPY --chown=node:node . .
 
