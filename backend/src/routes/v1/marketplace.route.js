@@ -7,6 +7,7 @@ const catchAsync = require('../../utils/catchAsync');
 const carriers = require('../../services/carriers');
 const policy = require('../../integrations/marketplacePolicy');
 const tracking = require('../../integrations/bridge/carrierTracking.service');
+const { createLimiter } = require('../../utils/limits');
 const { displayShipmentStatus } = require('../../integrations/utils/shipmentProgress');
 
 const quoteSchema = new mongoose.Schema({ connection: mongoose.Schema.Types.ObjectId, livemode: { type: Boolean, default: true }, input: Object, parcels: [Object], options: [Object], expiresAt: Date }, { timestamps: true });
@@ -20,6 +21,13 @@ dispatchSchema.index({ createdAt: 1 }, { expireAfterSeconds: 30 * 24 * 3600, par
 const Quote = mongoose.models.MarketplaceParcelQuote || mongoose.model('MarketplaceParcelQuote', quoteSchema);
 const Dispatch = mongoose.models.MarketplaceDispatch || mongoose.model('MarketplaceDispatch', dispatchSchema);
 const router = express.Router();
+
+// Browse-time estimates share one small lane, so a burst of product-page visitors queues here instead of
+// swamping the carriers and slowing down real checkout quotes, which are never held up by it.
+const estimateLane = createLimiter({
+  concurrent: Number(process.env.CLOUDSHIP_MAX_CONCURRENT_ESTIMATES) || 6,
+  queue: Number(process.env.CLOUDSHIP_MAX_QUEUED_ESTIMATES) || 60,
+});
 
 function signature(secret, timestamp, body) { return crypto.createHmac('sha256', secret).update(`${timestamp}.${body}`).digest('hex'); }
 router.use(catchAsync(async (req, res, next) => {
@@ -43,9 +51,9 @@ function isLive(connection) { return connection.livemode !== false; }
 // Test-mode stores are simulated end to end, so they need no invoicing approval.
 function invoiceEnabled(connection) { return !isLive(connection) || String(process.env.CLOUDSHIP_INVOICE_CONNECTION_IDS || '').split(',').map(value => value.trim()).includes(String(connection._id)); }
 // phase 'book' lets the simulated carrier raise its price between checkout and booking (magic address `price-increase`).
-async function quotesFor(parcels, livemode, phase) {
+async function quotesFor(parcels, livemode, phase, estimate = false) {
   const rows = [];
-  for (let offset = 0; offset < parcels.length; offset += 5) rows.push(...await Promise.all(parcels.slice(offset, offset + 5).map(parcel => carriers.quoteAll(livemode ? parcel : { ...parcel, sandboxPhase: phase }, { livemode }))));
+  for (let offset = 0; offset < parcels.length; offset += 5) rows.push(...await Promise.all(parcels.slice(offset, offset + 5).map(parcel => carriers.quoteAll(livemode ? parcel : { ...parcel, sandboxPhase: phase }, { livemode, estimate }))));
   return rows.map(row => row.partners || []);
 }
 function expanded(input) {
@@ -56,6 +64,12 @@ function expanded(input) {
 router.post('/rates', catchAsync(async (req, res) => {
   if (!invoiceEnabled(req.connectionRecord)) throw new ApiError(503, 'CloudShip account settlement must be enabled before checkout shipping is available.');
   const parcels = expanded(req.body);
+  // `estimate: true` is a non-binding browse price: short carrier waits, nothing saved, no quoteId, cannot be booked.
+  if (req.body.estimate === true) {
+    const rows = await estimateLane.run(() => quotesFor(parcels, isLive(req.connectionRecord), 'rates', true));
+    const estimated = policy.commonOptions(rows);
+    return res.send(estimated.length ? { estimate: true, options: estimated } : { estimate: true, options: [], reason: 'No common carrier service is available for these parcels and route.' });
+  }
   const rows = await quotesFor(parcels, isLive(req.connectionRecord), 'rates');
   const options = policy.commonOptions(rows);
   if (!options.length) return res.send({ options: [], reason: 'No common carrier service is available for these parcels and route.' });

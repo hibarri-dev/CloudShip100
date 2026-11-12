@@ -22,6 +22,7 @@ function harness(conn = connection) {
     if (name === 'crypto') return crypto;
     if (name === 'mongoose') return { Schema, models, Types: { ObjectId: { isValid: value => /^[a-f0-9]{24}$/.test(value) } }, model: name => models[name] };
     if (name === '../../models') return { StoreConnection: { findOne: async () => conn }, Booking: { async create(data) { const booking = document({ ...data, _id: `booking-${count++}` }); bookings.push(booking); return booking; }, async find(query) { return bookings.filter(booking => query._id.$in.includes(booking._id)); } } };
+    if (name.endsWith('/limits')) return require('../../src/utils/limits');
     if (name.endsWith('/ApiError')) return class ApiError extends Error { constructor(code, message) { super(message); this.statusCode = code; } };
     if (name.endsWith('/catchAsync')) return fn => fn;
     if (name.endsWith('/marketplacePolicy')) return policy;
@@ -192,4 +193,57 @@ test('carrier quotes follow the request mode unless a caller states one explicit
     assert.equal((await carriers.quoteAll(shipment, { livemode: true })).partners.some(row => row.partnerId === 'sandbox_courier'), false); // explicit wins
   });
   assert.equal((await carriers.quoteAll(shipment)).partners.some(row => row.partnerId === 'sandbox_courier'), false); // no request: live carriers only
+});
+
+test('estimate rates are non-binding: flagged to the carrier layer, nothing saved, no quote id to book with', async () => {
+  const previous = process.env.CLOUDSHIP_INVOICE_CONNECTION_IDS; process.env.CLOUDSHIP_INVOICE_CONNECTION_IDS = connection._id;
+  try {
+    const h = harness();
+    const estimate = await h.call('/rates', { ...input, estimate: true });
+    assert.equal(estimate.estimate, true); assert.equal(estimate.options[0].quotedPrice, 100);
+    assert.equal(estimate.quoteId, undefined); assert.equal(h.quote(), undefined);
+    assert.equal(h.seen.at(-1).estimate, true);
+    // An ordinary rates request is unchanged: saved, bookable, not flagged.
+    const real = await h.call('/rates', input);
+    assert.ok(real.quoteId); assert.ok(h.quote()); assert.equal(h.seen.at(-1).estimate, false);
+  } finally { if (previous === undefined) delete process.env.CLOUDSHIP_INVOICE_CONNECTION_IDS; else process.env.CLOUDSHIP_INVOICE_CONNECTION_IDS = previous; }
+});
+test('the limiter runs a fixed number at once, queues the rest in order, and refuses when the line is full', async () => {
+  const { createLimiter } = require('../../src/utils/limits');
+  const lane = createLimiter({ concurrent: 2, queue: 2 });
+  let active = 0, peak = 0; const order = [];
+  const job = id => lane.run(async () => { active += 1; peak = Math.max(peak, active); await new Promise(resolve => setTimeout(resolve, 10)); active -= 1; order.push(id); return id; });
+  const first = [1, 2, 3, 4].map(job);
+  await assert.rejects(job(5), error => error.statusCode === 503 && /Too many/.test(error.message));
+  assert.deepEqual(await Promise.all(first), [1, 2, 3, 4]);
+  assert.equal(peak, 2); assert.deepEqual(lane.stats(), { running: 0, waiting: 0 });
+  await assert.rejects(lane.run(async () => { throw new Error('boom'); }), /boom/);
+  assert.deepEqual(lane.stats(), { running: 0, waiting: 0 });
+});
+test('an estimate leaves out a carrier that is too slow instead of waiting for it, and saves nothing', async () => {
+  process.env.CLOUDSHIP_ESTIMATE_CARRIER_TIMEOUT_MS = '40';
+  const Module = require('node:module'); const root = path.join(__dirname, '../../src/services/carriers');
+  const stub = (file, exports) => { const resolved = require.resolve(path.join(root, file)); require.cache[resolved] = { id: resolved, filename: resolved, loaded: true, exports }; return resolved; };
+  const saved = [];
+  const adapter = (id, quote) => ({ id, name: id, isConfigured: () => true, quote });
+  const fast = adapter('fast', async () => ({ options: [{ partnerPrice: 10, currency: 'ZAR', serviceName: 'Economy' }] }));
+  const slow = adapter('slow', () => new Promise(resolve => setTimeout(() => resolve({ options: [{ partnerPrice: 5, currency: 'ZAR', serviceName: 'Economy' }] }), 400)));
+  const keys = [stub('courierGuy.adapter.js', fast), stub('uberDirect.adapter.js', slow), stub('dhlExpress.adapter.js', adapter('d', async () => { throw new Error('off'); })), stub('fedex.adapter.js', adapter('f', async () => { throw new Error('off'); })), stub('dsv.adapter.js', adapter('s', async () => { throw new Error('off'); })),
+    stub('sandbox.adapter.js', adapter('sandbox', async () => ({ options: [] }))), stub('quoteStore.js', { put: async payload => { saved.push(payload); return { quoteId: 'saved-1', expiresAt: new Date().toISOString() }; } }),
+    require.resolve('../../src/config/config')];
+  require.cache[keys.at(-1)] = { id: keys.at(-1), filename: keys.at(-1), loaded: true, exports: { margin: { percent: 0, flat: 0 } } };
+  const indexPath = require.resolve(path.join(root, 'index.js')); delete require.cache[indexPath];
+  try {
+    const carriers = require(indexPath);
+    const started = Date.now();
+    const estimate = await carriers.quoteAll({ pickup: 'A', dropoff: 'B', weightKg: 1 }, { livemode: true, estimate: true });
+    assert.ok(Date.now() - started < 300, 'did not wait for the slow carrier');
+    assert.deepEqual(estimate.partners.filter(row => row.available).map(row => row.partnerId), ['fast']);
+    assert.match(estimate.partners.find(row => row.partnerId === 'slow').error, /did not answer/);
+    assert.equal(saved.length, 0); assert.match(estimate.cheapest.quoteId, /^est_/);
+    // Checkout quotes still wait for every carrier and are saved so they can be booked.
+    const real = await carriers.quoteAll({ pickup: 'A', dropoff: 'B', weightKg: 1 }, { livemode: true });
+    assert.deepEqual(real.partners.filter(row => row.available).map(row => row.partnerId).sort(), ['fast', 'slow']);
+    assert.equal(saved.length, 2);
+  } finally { delete process.env.CLOUDSHIP_ESTIMATE_CARRIER_TIMEOUT_MS; for (const key of [...keys, indexPath]) delete require.cache[key]; }
 });

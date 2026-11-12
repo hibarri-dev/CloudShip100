@@ -1,4 +1,6 @@
+const crypto = require('crypto');
 const config = require('../../config/config');
+const { withTimeout } = require('../../utils/limits');
 const { applyMargin } = require('./margin');
 const quoteStore = require('./quoteStore');
 const { publicQuotes, friendlyBookMessage } = require('./publicQuote');
@@ -20,6 +22,12 @@ const requestMode = require('../../utils/requestMode');
 
 const adapters = [courierGuy, uberDirect, dhlExpress, fedex, dsv];
 
+// Browse-time estimates give each carrier a short window: whoever hasn't answered is simply left out of
+// the estimate, so one slow carrier can't hold up (or time out) the whole answer. Checkout quotes keep the
+// carriers' full time.
+const ESTIMATE_CARRIER_TIMEOUT_MS = Number(process.env.CLOUDSHIP_ESTIMATE_CARRIER_TIMEOUT_MS) || 8000;
+const ESTIMATE_TTL_MS = 15 * 60 * 1000;
+
 // Test-mode stores only ever see the simulated carrier; live stores never see it.
 const adaptersFor = (livemode) => (livemode === false ? [sandbox] : adapters);
 const getAdapter = (partnerId) => [...adapters, sandbox].find((adapter) => adapter.id === partnerId);
@@ -33,16 +41,22 @@ const unavailable = (adapter, error) => [
   },
 ];
 
-const priceOption = async (adapter, shipment, option, livemode) => {
+const priceOption = async (adapter, shipment, option, livemode, estimate) => {
   const priced = applyMargin(option.partnerPrice, config.margin);
-  const stored = await quoteStore.put({
-    partnerId: adapter.id,
-    partnerName: adapter.name,
-    shipment,
-    ...option,
-    ...priced,
-    livemode: livemode !== false,
-  });
+  // An estimate can never be booked, so it is not saved: no database write, and a throwaway id.
+  const stored = estimate
+    ? {
+        quoteId: `est_${crypto.randomBytes(8).toString('hex')}`,
+        expiresAt: new Date(Date.now() + ESTIMATE_TTL_MS).toISOString(),
+      }
+    : await quoteStore.put({
+        partnerId: adapter.id,
+        partnerName: adapter.name,
+        shipment,
+        ...option,
+        ...priced,
+        livemode: livemode !== false,
+      });
   const speed = classifySpeed({
     partnerId: adapter.id,
     serviceName: option.serviceName,
@@ -71,25 +85,30 @@ const priceOption = async (adapter, shipment, option, livemode) => {
   };
 };
 
-const quoteAdapter = async (adapter, shipment, livemode) => {
+const quoteAdapter = async (adapter, shipment, livemode, estimate) => {
   if (!adapter.isConfigured()) {
     return unavailable(adapter, 'Not configured. Add API credentials to the backend .env');
   }
   try {
-    const raw = await adapter.quote(shipment);
+    const raw = estimate
+      ? await withTimeout(adapter.quote(shipment), ESTIMATE_CARRIER_TIMEOUT_MS, adapter.name)
+      : await adapter.quote(shipment);
     const options = normalizeOptions(raw).filter((row) => Number.isFinite(Number(row.partnerPrice)));
     if (!options.length) {
       return unavailable(adapter, 'No rates returned');
     }
-    return Promise.all(options.map((option) => priceOption(adapter, shipment, option, livemode)));
+    return Promise.all(options.map((option) => priceOption(adapter, shipment, option, livemode, estimate)));
   } catch (err) {
     return unavailable(adapter, err.message || 'Quote failed');
   }
 };
 
 // Unless told otherwise, quotes and bookings follow the current request's Test/Live mode.
-const quoteAll = async (shipment, { livemode = requestMode.isLive() } = {}) => {
-  const nested = await Promise.all(adaptersFor(livemode).map((adapter) => quoteAdapter(adapter, shipment, livemode)));
+// `estimate: true` is for browsing: carriers get a short window and nothing is saved (see above).
+const quoteAll = async (shipment, { livemode = requestMode.isLive(), estimate = false } = {}) => {
+  const nested = await Promise.all(
+    adaptersFor(livemode).map((adapter) => quoteAdapter(adapter, shipment, livemode, estimate))
+  );
   const partners = nested.flat();
   const available = partners.filter((row) => row.available);
   available.sort((a, b) => a.sellPrice - b.sellPrice);
